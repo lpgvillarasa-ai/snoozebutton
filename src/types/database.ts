@@ -22,7 +22,6 @@ export interface UserRow {
 export interface AvailabilityStatusRow {
   id: string;
   boss_user_id: string;
-  current_status: EffectiveStatus;
   status_message: string | null;
   snooze_until: string | null;       // ISO
   calendar_busy_until: string | null; // ISO
@@ -80,7 +79,6 @@ export interface Database {
     Functions: Record<string, never>;
     Enums: {
       user_role: UserRole;
-      effective_status: EffectiveStatus;
       manual_override_kind: ManualOverrideKind;
     };
     CompositeTypes: Record<string, never>;

@@ -2,20 +2,26 @@ import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { Settings } from '@/components/Settings';
 import { BottomNav } from '@/components/BottomNav';
-import type { UserRow } from '@/types/database';
+import type { UserRole, UserRow } from '@/types/database';
 
 export const dynamic = 'force-dynamic';
 
-interface TeamMember { name: string | null; email: string; role: string }
+interface TeamMember { name: string | null; email: string; role: UserRole }
 
 export default async function SettingsPage() {
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
 
   const admin = createAdminClient();
-  const me: UserRow | null = user
-    ? (await admin.from('users').select('*').eq('id', user.id).maybeSingle<UserRow>()).data
-    : null;
+  let me: UserRow | null = null;
+  if (user) {
+    const { data } = await admin
+      .from('users')
+      .select('*')
+      .eq('id', user.id)
+      .maybeSingle<UserRow>();
+    me = data;
+  }
 
   const isBoss = me?.role === 'boss';
 

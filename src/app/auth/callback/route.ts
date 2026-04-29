@@ -2,20 +2,23 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { isBossEmail } from '@/lib/boss';
+import { GOOGLE_CALENDAR_SCOPE } from '@/lib/google/calendar';
 
 export const dynamic = 'force-dynamic';
 
-/**
- * Supabase OAuth redirect target.
- *
- * - Exchanges the `code` for a session.
- * - If the signed-in user is the boss, captures their Google access/refresh
- *   tokens for Calendar reads and stores them server-side.
- */
+/** Allow only relative same-origin paths — closes an open-redirect hole. */
+function safeNext(raw: string | null, fallback = '/dashboard'): string {
+  if (!raw) return fallback;
+  if (!raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/\\')) {
+    return fallback;
+  }
+  return raw;
+}
+
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get('code');
-  const next = searchParams.get('next') || '/dashboard';
+  const next = safeNext(searchParams.get('next'));
 
   if (!code) return NextResponse.redirect(`${origin}/login?error=missing_code`);
 
@@ -26,37 +29,30 @@ export async function GET(request: NextRequest) {
   }
 
   const session = data.session;
-  const email = session.user.email;
 
-  // If this is the boss and Supabase returned a Google provider token, persist
-  // it so our server can read the calendar in the background.
-  if (
-    isBossEmail(email) &&
-    session.provider_token
-  ) {
+  if (isBossEmail(session.user.email) && session.provider_token) {
     const admin = createAdminClient();
-    await admin.from('google_calendar_tokens').upsert(
-      {
-        user_id: session.user.id,
-        access_token: session.provider_token,
-        refresh_token: session.provider_refresh_token ?? null,
-        expiry_date: session.expires_at ? session.expires_at * 1000 : null,
-        scope: 'https://www.googleapis.com/auth/calendar.readonly',
-      },
-      { onConflict: 'user_id' },
-    );
-
-    // Make sure they're flagged as boss in our mirrored users table.
-    await admin
-      .from('users')
-      .update({ role: 'boss' })
-      .eq('id', session.user.id);
-
-    // Ensure an availability row exists.
-    await admin.from('availability_status').upsert(
-      { boss_user_id: session.user.id, current_status: 'available' },
-      { onConflict: 'boss_user_id' },
-    );
+    // Token storage + role promotion. Run in parallel; `availability_status`
+    // is created lazily by `applyAvailabilityUpdate` on first state change,
+    // and the `handle_new_user` trigger has already inserted the user row.
+    await Promise.all([
+      admin.from('google_calendar_tokens').upsert(
+        {
+          user_id: session.user.id,
+          access_token: session.provider_token,
+          refresh_token: session.provider_refresh_token ?? null,
+          expiry_date: session.expires_at ? session.expires_at * 1000 : null,
+          scope: GOOGLE_CALENDAR_SCOPE,
+        },
+        { onConflict: 'user_id' },
+      ),
+      // No-op on subsequent sign-ins (filtered to viewer rows only).
+      admin
+        .from('users')
+        .update({ role: 'boss' })
+        .eq('id', session.user.id)
+        .eq('role', 'viewer'),
+    ]);
   }
 
   return NextResponse.redirect(`${origin}${next}`);

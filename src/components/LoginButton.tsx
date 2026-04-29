@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { GOOGLE_OAUTH_SCOPES } from '@/lib/google/scopes';
 
 export function LoginButton({ next }: { next?: string }) {
   const [loading, setLoading] = useState(false);
@@ -16,11 +17,8 @@ export function LoginButton({ next }: { next?: string }) {
       provider: 'google',
       options: {
         redirectTo,
-        scopes: 'openid email profile https://www.googleapis.com/auth/calendar.readonly',
-        queryParams: {
-          access_type: 'offline',
-          prompt: 'consent',
-        },
+        scopes: GOOGLE_OAUTH_SCOPES,
+        queryParams: { access_type: 'offline', prompt: 'consent' },
       },
     });
   }

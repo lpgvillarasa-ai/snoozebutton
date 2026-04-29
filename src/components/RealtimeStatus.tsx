@@ -1,10 +1,14 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { AvailabilityStatusRow, ResolvedStatus } from '@/types/database';
 import { createClient } from '@/lib/supabase/client';
 import { resolveStatus } from '@/lib/status';
 import { StatusDisplay } from './StatusDisplay';
+
+function sameStatus(a: ResolvedStatus, b: ResolvedStatus): boolean {
+  return a.status === b.status && a.message === b.message && a.until === b.until;
+}
 
 export function RealtimeStatus({
   bossUserId,
@@ -14,19 +18,40 @@ export function RealtimeStatus({
   initial: ResolvedStatus;
 }) {
   const [status, setStatus] = useState<ResolvedStatus>(initial);
+  // Cache the last raw row so we can re-resolve when a snooze/calendar timer
+  // expires without going back to the database.
+  const rowRef = useRef<AvailabilityStatusRow | null>(null);
 
   useEffect(() => {
     const supabase = createClient();
+    let alive = true;
+    let boundaryTimer: ReturnType<typeof setTimeout> | undefined;
 
-    // Initial refetch in case page was cached.
+    function adopt(row: AvailabilityStatusRow) {
+      if (!alive) return;
+      rowRef.current = row;
+      const next = resolveStatus(row);
+      setStatus((prev) => (sameStatus(prev, next) ? prev : next));
+      scheduleBoundary(next.until);
+    }
+
+    function scheduleBoundary(untilIso: string | null) {
+      if (boundaryTimer) clearTimeout(boundaryTimer);
+      if (!untilIso) return;
+      const ms = new Date(untilIso).getTime() - Date.now() + 500;
+      if (ms <= 0) return;
+      // Cap at ~1 day to dodge setTimeout overflow on far-future timestamps.
+      boundaryTimer = setTimeout(() => {
+        if (rowRef.current) adopt(rowRef.current);
+      }, Math.min(ms, 24 * 60 * 60 * 1000));
+    }
+
     supabase
       .from('availability_status')
       .select('*')
       .eq('boss_user_id', bossUserId)
-      .maybeSingle()
-      .then(({ data }) => {
-        if (data) setStatus(resolveStatus(data as AvailabilityStatusRow));
-      });
+      .maybeSingle<AvailabilityStatusRow>()
+      .then(({ data }) => { if (data) adopt(data); });
 
     const channel = supabase
       .channel(`availability:${bossUserId}`)
@@ -40,24 +65,15 @@ export function RealtimeStatus({
         },
         (payload) => {
           const row = payload.new as AvailabilityStatusRow;
-          if (row) setStatus(resolveStatus(row));
+          if (row) adopt(row);
         },
       )
       .subscribe();
 
-    // Periodic re-resolve so snooze/calendar timers expire client-side too.
-    const tick = setInterval(async () => {
-      const { data } = await supabase
-        .from('availability_status')
-        .select('*')
-        .eq('boss_user_id', bossUserId)
-        .maybeSingle();
-      if (data) setStatus(resolveStatus(data as AvailabilityStatusRow));
-    }, 60_000);
-
     return () => {
+      alive = false;
+      if (boundaryTimer) clearTimeout(boundaryTimer);
       supabase.removeChannel(channel);
-      clearInterval(tick);
     };
   }, [bossUserId]);
 

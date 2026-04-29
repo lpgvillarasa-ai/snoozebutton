@@ -14,10 +14,6 @@ do $$ begin
 exception when duplicate_object then null; end $$;
 
 do $$ begin
-  create type effective_status as enum ('available', 'unavailable', 'snoozed', 'calendar_busy');
-exception when duplicate_object then null; end $$;
-
-do $$ begin
   create type manual_override_kind as enum ('available', 'unavailable');
 exception when duplicate_object then null; end $$;
 
@@ -38,7 +34,6 @@ create table if not exists public.users (
 create table if not exists public.availability_status (
   id                   uuid primary key default gen_random_uuid(),
   boss_user_id         uuid not null references public.users(id) on delete cascade,
-  current_status       effective_status not null default 'available',
   status_message       text,
   snooze_until         timestamptz,
   calendar_busy_until  timestamptz,
@@ -46,6 +41,9 @@ create table if not exists public.availability_status (
   updated_at           timestamptz not null default now(),
   unique (boss_user_id)
 );
+
+-- Note: the effective status is derived from (manual_override, snooze_until,
+-- calendar_busy_until) by `resolveStatus()` on read. Do not cache it.
 
 create index if not exists availability_status_boss_idx
   on public.availability_status (boss_user_id);
@@ -104,8 +102,8 @@ begin
 
   -- ensure the boss has an availability row
   if is_boss then
-    insert into public.availability_status (boss_user_id, current_status)
-    values (new.id, 'available')
+    insert into public.availability_status (boss_user_id)
+    values (new.id)
     on conflict (boss_user_id) do nothing;
   end if;
 
@@ -148,7 +146,10 @@ alter table public.availability_status         enable row level security;
 alter table public.notification_subscriptions  enable row level security;
 alter table public.google_calendar_tokens      enable row level security;
 
--- users: anyone signed in can read; user can update own row.
+-- users: anyone signed in can read; nobody can write from the client.
+-- Inserts come from the auth.users trigger (security definer); role changes
+-- happen via the service-role admin client in /auth/callback.
+-- (No update/insert/delete policy = no client write access.)
 drop policy if exists "users select all signed in" on public.users;
 create policy "users select all signed in"
   on public.users for select
@@ -156,10 +157,6 @@ create policy "users select all signed in"
   using (true);
 
 drop policy if exists "users update own" on public.users;
-create policy "users update own"
-  on public.users for update
-  to authenticated
-  using (auth.uid() = id);
 
 -- availability_status: any signed-in user can read; only the boss row owner can write.
 drop policy if exists "availability read all signed in" on public.availability_status;

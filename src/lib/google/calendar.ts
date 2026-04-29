@@ -2,9 +2,11 @@ import { google } from 'googleapis';
 import { createAdminClient } from '@/lib/supabase/admin';
 import type { GoogleCalendarTokensRow } from '@/types/database';
 
+export { GOOGLE_CALENDAR_SCOPE, GOOGLE_OAUTH_SCOPES } from './scopes';
+
 /**
- * Build a Google OAuth2 client preloaded with the boss's stored tokens,
- * and wire a listener that persists token refreshes back to the database.
+ * Build a Google OAuth2 client preloaded with the boss's stored tokens.
+ * Persists rotated tokens back to the database.
  */
 export async function getCalendarClient(bossUserId: string) {
   const supabase = createAdminClient();
@@ -46,9 +48,11 @@ export async function getCalendarClient(bossUserId: string) {
 }
 
 /**
- * Returns the end time of the boss's currently-active event, or null.
- * "Active" = event with start <= now <= end, on the primary calendar,
- * not declined, not transparent (free), not all-day.
+ * End time of the boss's currently-active event, or null if free.
+ *
+ * Window: events whose end is after now-60s and start is before now+60s — that
+ * covers any event happening right now (Calendar's `timeMin` filters by event
+ * end, `timeMax` filters by event start).
  */
 export async function getActiveBusyUntil(
   bossUserId: string,
@@ -56,24 +60,20 @@ export async function getActiveBusyUntil(
 ): Promise<Date | null> {
   const calendar = await getCalendarClient(bossUserId);
 
-  // Peek slightly forward so we catch an event that started in the same minute.
-  const timeMin = new Date(now.getTime() - 60_000).toISOString();
-  const timeMax = new Date(now.getTime() + 12 * 60 * 60 * 1000).toISOString();
-
   const { data } = await calendar.events.list({
     calendarId: 'primary',
-    timeMin,
-    timeMax,
+    timeMin: new Date(now.getTime() - 60_000).toISOString(),
+    timeMax: new Date(now.getTime() + 60_000).toISOString(),
     singleEvents: true,
     orderBy: 'startTime',
-    maxResults: 25,
+    maxResults: 10,
   });
 
   let latestEnd: Date | null = null;
 
   for (const ev of data.items ?? []) {
     if (ev.status === 'cancelled') continue;
-    if (ev.transparency === 'transparent') continue; // marked free
+    if (ev.transparency === 'transparent') continue;        // marked free
     if (!ev.start?.dateTime || !ev.end?.dateTime) continue; // skip all-day
 
     const myAttendee = ev.attendees?.find((a) => a.self);

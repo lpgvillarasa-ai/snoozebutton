@@ -5,6 +5,7 @@ import { resolveStatus } from '@/lib/status';
 import { getBossUser } from '@/lib/boss';
 import { RealtimeStatus } from '@/components/RealtimeStatus';
 import { BottomNav } from '@/components/BottomNav';
+import type { AvailabilityStatusRow } from '@/types/database';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,7 +32,7 @@ export default async function DashboardPage() {
     .from('availability_status')
     .select('*')
     .eq('boss_user_id', boss.id)
-    .maybeSingle<import('@/types/database').AvailabilityStatusRow>();
+    .maybeSingle<AvailabilityStatusRow>();
 
   const initial = row
     ? resolveStatus(row)

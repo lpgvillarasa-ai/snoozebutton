@@ -1,6 +1,3 @@
-// Boss Availability — service worker
-// Handles: install prompt eligibility, push notifications, click-to-open.
-
 self.addEventListener('install', (event) => {
   self.skipWaiting();
 });

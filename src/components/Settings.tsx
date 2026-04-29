@@ -3,8 +3,24 @@
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { ThemeToggle } from './ThemeToggle';
+import {
+  detectPushSupport,
+  urlBase64ToUint8Array,
+  type PushState,
+} from '@/lib/push-client';
+import { GOOGLE_OAUTH_SCOPES } from '@/lib/google/scopes';
+import type { UserRole } from '@/types/database';
 
-interface TeamMember { name: string | null; email: string; role: string }
+interface TeamMember { name: string | null; email: string; role: UserRole }
+
+async function readPushState(): Promise<PushState> {
+  if (!detectPushSupport()) return 'unsupported';
+  if (Notification.permission === 'denied') return 'denied';
+  const reg = await navigator.serviceWorker.ready;
+  const sub = await reg.pushManager.getSubscription();
+  if (sub) return 'subscribed';
+  return Notification.permission === 'granted' ? 'granted' : 'unknown';
+}
 
 export function Settings({
   isBoss,
@@ -19,23 +35,15 @@ export function Settings({
   team: TeamMember[];
   vapidPublicKey: string;
 }) {
-  const [pushState, setPushState] = useState<'unknown' | 'denied' | 'granted' | 'unsupported' | 'subscribed'>('unknown');
+  const [pushState, setPushState] = useState<PushState>('unknown');
   const [pushBusy, setPushBusy] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
 
   useEffect(() => {
-    (async () => {
-      if (typeof window === 'undefined') return;
-      if (!('Notification' in window) || !('serviceWorker' in navigator) || !('PushManager' in window)) {
-        setPushState('unsupported');
-        return;
-      }
-      if (Notification.permission === 'denied') return setPushState('denied');
-      const reg = await navigator.serviceWorker.ready;
-      const sub = await reg.pushManager.getSubscription();
-      setPushState(sub ? 'subscribed' : Notification.permission === 'granted' ? 'granted' : 'unknown');
-    })();
+    let alive = true;
+    readPushState().then((s) => { if (alive) setPushState(s); });
+    return () => { alive = false; };
   }, []);
 
   async function enablePush() {
@@ -102,7 +110,7 @@ export function Settings({
       provider: 'google',
       options: {
         redirectTo: `${window.location.origin}/auth/callback?next=/settings`,
-        scopes: 'openid email profile https://www.googleapis.com/auth/calendar.readonly',
+        scopes: GOOGLE_OAUTH_SCOPES,
         queryParams: { access_type: 'offline', prompt: 'consent' },
       },
     });
@@ -115,7 +123,7 @@ export function Settings({
   }
 
   return (
-    <div className="flex-1 flex flex-col gap-4">
+    <div className="space-y-4">
       {isBoss && (
         <Section title="Google Calendar">
           <Row label="Status" value={calendarConnected ? 'Connected' : 'Not connected'} />
@@ -139,21 +147,12 @@ export function Settings({
       )}
 
       <Section title="Notifications">
-        {pushState === 'unsupported' && <p className="text-sm text-ink-500">This browser doesn't support push.</p>}
-        {pushState === 'denied' && <p className="text-sm text-ink-500">Notifications are blocked in your browser settings.</p>}
-        {pushState !== 'unsupported' && pushState !== 'denied' && (
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="text-sm font-medium">Push when boss is available</div>
-              <div className="text-xs text-ink-500">Get a single ping the moment status flips to green.</div>
-            </div>
-            {pushState === 'subscribed' ? (
-              <button onClick={disablePush} disabled={pushBusy} className="btn-secondary">Off</button>
-            ) : (
-              <button onClick={enablePush} disabled={pushBusy} className="btn-primary">Enable</button>
-            )}
-          </div>
-        )}
+        <PushControl
+          state={pushState}
+          busy={pushBusy}
+          onEnable={enablePush}
+          onDisable={disablePush}
+        />
       </Section>
 
       <Section title="Appearance">
@@ -194,6 +193,35 @@ export function Settings({
   );
 }
 
+function PushControl({
+  state, busy, onEnable, onDisable,
+}: {
+  state: PushState;
+  busy: boolean;
+  onEnable: () => void;
+  onDisable: () => void;
+}) {
+  if (state === 'unsupported') {
+    return <p className="text-sm text-ink-500">This browser doesn't support push.</p>;
+  }
+  if (state === 'denied') {
+    return <p className="text-sm text-ink-500">Notifications are blocked in your browser settings.</p>;
+  }
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div>
+        <div className="text-sm font-medium">Push when boss is available</div>
+        <div className="text-xs text-ink-500">Get a single ping the moment status flips to green.</div>
+      </div>
+      {state === 'subscribed' ? (
+        <button onClick={onDisable} disabled={busy} className="btn-secondary">Off</button>
+      ) : (
+        <button onClick={onEnable} disabled={busy} className="btn-primary">Enable</button>
+      )}
+    </div>
+  );
+}
+
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="card p-5 fade-up">
@@ -212,13 +240,4 @@ function Row({ label, value }: { label: string; value: string }) {
       <span className="text-sm font-medium">{value}</span>
     </div>
   );
-}
-
-function urlBase64ToUint8Array(base64: string): Uint8Array {
-  const padding = '='.repeat((4 - (base64.length % 4)) % 4);
-  const b64 = (base64 + padding).replace(/-/g, '+').replace(/_/g, '/');
-  const raw = atob(b64);
-  const out = new Uint8Array(raw.length);
-  for (let i = 0; i < raw.length; ++i) out[i] = raw.charCodeAt(i);
-  return out;
 }

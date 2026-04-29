@@ -1,5 +1,4 @@
-export function formatUntil(iso: string | null | undefined): string {
-  if (!iso) return '';
+export function formatUntil(iso: string): string {
   const d = new Date(iso);
   const now = new Date();
   const sameDay =

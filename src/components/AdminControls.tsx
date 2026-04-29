@@ -11,13 +11,7 @@ const SNOOZE_PRESETS = [
   { label: 'Snooze 1h',  minutes: 60 },
 ];
 
-export function AdminControls({
-  bossUserId: _bossUserId,
-  initial,
-}: {
-  bossUserId: string;
-  initial: ResolvedStatus;
-}) {
+export function AdminControls({ initial }: { initial: ResolvedStatus }) {
   const [status, setStatus] = useState<ResolvedStatus>(initial);
   const [busy, setBusy] = useState<string | null>(null);
   const [, startTransition] = useTransition();

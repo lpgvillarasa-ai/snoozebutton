@@ -1,6 +1,9 @@
 import type { EffectiveStatus } from '@/types/database';
 
-const STYLES: Record<EffectiveStatus, { dot: string; ring: string; text: string; label: string }> = {
+export const STATUS_STYLES: Record<
+  EffectiveStatus,
+  { dot: string; ring: string; text: string; label: string }
+> = {
   available: {
     dot:  'bg-status-available',
     ring: 'ring-status-available/20 text-emerald-700 dark:text-emerald-300',
@@ -34,7 +37,7 @@ export function StatusBadge({
   status: EffectiveStatus;
   pulse?: boolean;
 }) {
-  const s = STYLES[status];
+  const s = STATUS_STYLES[status];
   return (
     <span className={`pill ${s.ring}`}>
       <span className={`status-dot ${s.dot} ${pulse ? 'live' : ''}`} />
@@ -42,5 +45,3 @@ export function StatusBadge({
     </span>
   );
 }
-
-export const STATUS_STYLES = STYLES;

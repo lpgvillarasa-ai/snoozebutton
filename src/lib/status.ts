@@ -4,18 +4,11 @@ import type {
 } from '@/types/database';
 import { isFuture } from './time';
 
-/**
- * Resolution priority (highest first):
- *
- *   1. calendar_busy_until > now            -> calendar_busy
- *   2. manual_override = 'unavailable'      -> unavailable
- *   3. snooze_until > now                   -> snoozed
- *   4. otherwise                             -> available
- *
- * Notes (per spec):
- *   - calendar_busy always wins; "Available now" does NOT override it.
- *   - "Available now" clears snooze and manual unavailable.
- */
+// Priority (highest wins):
+//   1. calendar_busy_until > now           -> calendar_busy   (always sticky per spec)
+//   2. manual_override = 'unavailable'     -> unavailable
+//   3. snooze_until > now                  -> snoozed
+//   4. otherwise                           -> available
 export function resolveStatus(
   row: Pick<
     AvailabilityStatusRow,
@@ -48,13 +41,4 @@ export function resolveStatus(
   }
 
   return { status: 'available', message: 'Available', until: null };
-}
-
-export function statusLabel(status: ResolvedStatus): string {
-  switch (status.status) {
-    case 'available':     return 'Available';
-    case 'unavailable':   return 'Unavailable';
-    case 'snoozed':       return 'Snoozed';
-    case 'calendar_busy': return 'In a meeting';
-  }
 }

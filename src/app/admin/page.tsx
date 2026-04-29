@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { resolveStatus } from '@/lib/status';
 import { AdminControls } from '@/components/AdminControls';
 import { BottomNav } from '@/components/BottomNav';
+import type { AvailabilityStatusRow, UserRow } from '@/types/database';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,7 +18,7 @@ export default async function AdminPage() {
     .from('users')
     .select('*')
     .eq('id', user.id)
-    .maybeSingle<import('@/types/database').UserRow>();
+    .maybeSingle<UserRow>();
 
   if (!me || me.role !== 'boss') {
     return (
@@ -36,7 +37,7 @@ export default async function AdminPage() {
     .from('availability_status')
     .select('*')
     .eq('boss_user_id', me.id)
-    .maybeSingle<import('@/types/database').AvailabilityStatusRow>();
+    .maybeSingle<AvailabilityStatusRow>();
 
   const initial = row
     ? resolveStatus(row)
@@ -53,7 +54,7 @@ export default async function AdminPage() {
             Set your status
           </h1>
         </header>
-        <AdminControls bossUserId={me.id} initial={initial} />
+        <AdminControls initial={initial} />
       </main>
       <BottomNav active="admin" isBoss />
     </>

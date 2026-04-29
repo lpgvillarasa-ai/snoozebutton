@@ -3,73 +3,92 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { getActiveBusyUntil } from '@/lib/google/calendar';
 import { resolveStatus } from '@/lib/status';
 import { notifyAllAvailable } from '@/lib/push';
-import type { AvailabilityStatusRow, ResolvedStatus } from '@/types/database';
+import type { AvailabilityStatusRow, ResolvedStatus, UserRow } from '@/types/database';
 
-export interface SyncResult {
-  ok: boolean;
-  status?: ResolvedStatus;
-  calendar_busy_until?: string | null;
-  error?: string;
+type AvailabilityPatch = Partial<
+  Pick<
+    AvailabilityStatusRow,
+    'manual_override' | 'snooze_until' | 'calendar_busy_until' | 'status_message'
+  >
+>;
+
+export interface ApplyOptions {
+  /** When the resolved status flips to 'available', send a push to subscribers. */
+  notifyOnAvailable?: boolean;
+}
+
+export interface ApplyResult {
+  row: AvailabilityStatusRow;
+  status: ResolvedStatus;
 }
 
 /**
- * Pull the boss's current Google Calendar event end time, write it back to
- * `availability_status`, and notify subscribers if the resolved status flips
- * to "available".
+ * Single write-path for availability state. Reads the current row, merges the
+ * patch, upserts, then fires a push if the resolved status transitioned to
+ * `available`. All three callers (status route, snooze route, calendar sync)
+ * use this so they can't drift.
  */
-export async function syncBoss(
-  bossUserId: string,
-  bossName?: string | null,
-): Promise<SyncResult> {
+export async function applyAvailabilityUpdate(
+  boss: Pick<UserRow, 'id' | 'name'>,
+  patch: AvailabilityPatch,
+  opts: ApplyOptions = {},
+): Promise<ApplyResult> {
   const admin = createAdminClient();
-
-  let busyUntil: Date | null;
-  try {
-    busyUntil = await getActiveBusyUntil(bossUserId);
-  } catch (err) {
-    return { ok: false, error: (err as Error).message };
-  }
 
   const { data: before } = await admin
     .from('availability_status')
     .select('*')
-    .eq('boss_user_id', bossUserId)
+    .eq('boss_user_id', boss.id)
     .maybeSingle<AvailabilityStatusRow>();
 
   const wasAvailable = before
     ? resolveStatus(before).status === 'available'
     : false;
 
-  const { data: row } = await admin
+  const { data: row, error } = await admin
     .from('availability_status')
     .upsert(
-      {
-        boss_user_id: bossUserId,
-        calendar_busy_until: busyUntil ? busyUntil.toISOString() : null,
-        current_status: before?.current_status ?? 'available',
-      },
+      { boss_user_id: boss.id, ...before, ...patch },
       { onConflict: 'boss_user_id' },
     )
     .select('*')
     .single<AvailabilityStatusRow>();
 
-  if (!row) return { ok: false, error: 'no_row' };
+  if (error || !row) throw error ?? new Error('availability_upsert_failed');
 
-  const resolved = resolveStatus(row);
-  if (resolved.status !== row.current_status) {
-    await admin
-      .from('availability_status')
-      .update({ current_status: resolved.status })
-      .eq('boss_user_id', bossUserId);
-  }
+  const status = resolveStatus(row);
 
-  if (resolved.status === 'available' && !wasAvailable) {
+  if (
+    opts.notifyOnAvailable &&
+    status.status === 'available' &&
+    !wasAvailable
+  ) {
     await notifyAllAvailable({
-      title: `${bossName || 'The boss'} is available`,
+      title: `${boss.name || 'The boss'} is available`,
       body: 'Tap to open the dashboard.',
       url: '/dashboard',
     });
   }
 
-  return { ok: true, status: resolved, calendar_busy_until: row.calendar_busy_until };
+  return { row, status };
+}
+
+/** Refresh the boss's calendar busy-until from Google and apply it. */
+export async function syncBoss(
+  boss: Pick<UserRow, 'id' | 'name'>,
+): Promise<{ ok: true; status: ResolvedStatus; calendar_busy_until: string | null } | { ok: false; error: string }> {
+  let busyUntil: Date | null;
+  try {
+    busyUntil = await getActiveBusyUntil(boss.id);
+  } catch (err) {
+    return { ok: false, error: (err as Error).message };
+  }
+
+  const { row, status } = await applyAvailabilityUpdate(
+    boss,
+    { calendar_busy_until: busyUntil ? busyUntil.toISOString() : null },
+    { notifyOnAvailable: true },
+  );
+
+  return { ok: true, status, calendar_busy_until: row.calendar_busy_until };
 }
