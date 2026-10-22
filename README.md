@@ -34,6 +34,8 @@ The app is at http://localhost:3000.
 1. Create a project at <https://supabase.com>.
 2. Open **SQL Editor** and run the contents of [`supabase/schema.sql`](supabase/schema.sql).
    This creates tables, enums, RLS policies, the `handle_new_user` trigger, and adds `availability_status` to the realtime publication.
+   Then run each file in [`supabase/migrations/`](supabase/migrations) in name order. The first one writes down
+   the Data API grants (who may reach each table), which Supabase stopped adding automatically on 2026-10-30.
 3. Copy these into `.env.local`:
    - `NEXT_PUBLIC_SUPABASE_URL`
    - `NEXT_PUBLIC_SUPABASE_ANON_KEY` (Settings → API → `anon` `public`)
@@ -180,6 +182,7 @@ Notes:
 
 ```
 supabase/schema.sql
+supabase/migrations/   (run after schema.sql, in name order)
 src/
   app/
     layout.tsx  page.tsx  globals.css
